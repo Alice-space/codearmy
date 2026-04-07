@@ -457,6 +457,86 @@ claude --resume "$FORK_ID"
 
 ---
 
+## 长等待自唤醒（alice-scheduler）
+
+当 Orchestrator 遇到需要长时间等待的操作（如模型训练、大规模数据处理、外部 CI/CD 等），**不要阻塞当前会话，也不要依赖用户手动叫醒**。使用 `alice-scheduler` 创建定时自唤醒任务，让 Orchestrator 在等待期间休眠，到点后自动恢复。
+
+### 流程
+
+**1. 识别长等待场景**
+
+以下情况应触发自唤醒机制：
+- 模型训练（预计 > 5 分钟）
+- 大规模数据处理或批量作业
+- 等待 CI/CD pipeline
+- 等待外部 API 返回（异步任务）
+- 任何 `status=blocked` 且阻塞原因是"等待外部事件"的 task
+
+**2. 创建自唤醒任务**
+
+```bash
+# 获取当前 session 信息
+SESSION_INFO=$(bash ~/.claude/skills/alice-scheduler/scripts/alice-scheduler.sh current-session)
+SESSION_KEY=$(echo "$SESSION_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin)['session_key'])")
+
+# 创建轮询任务（每 N 分钟唤醒一次）
+bash ~/.claude/skills/alice-scheduler/scripts/alice-scheduler.sh create << JSON
+{
+  "title": "codearmy-wakeup-<campaign_id>-<task_id>",
+  "schedule": { "type": "interval", "every_seconds": <check_interval_seconds> },
+  "resume_session_key": "$SESSION_KEY",
+  "action": {
+    "type": "run_llm",
+    "prompt": "【codearmy 自唤醒】campaign_id=<campaign_id>，正在等待：<等待内容描述>。\n\n请检查状态：<检查方法，如 check_command 或读取某个文件>。\n\n如果等待已完成：\n1. 读取 <campaign_repo_path>/reports/live-report.md 了解当前进展\n2. 删除本调度任务（task ID 见 campaign repo 的 checkpoints/ 最新文件）\n3. 继续 campaign 编排循环（见 SKILL.md 编排循环伪代码）\n\n如果等待未完成：\n- 汇报当前状态（预计剩余时间等）\n- 保持任务继续轮询，不做任何操作"
+  }
+}
+JSON
+```
+
+**3. 将调度任务 ID 记录到 checkpoint**
+
+```bash
+TASK_ID="<从创建响应中取 task.id>"
+cat >> <campaign_repo_path>/checkpoints/wakeup-<timestamp>.md << EOF
+# 自唤醒 Checkpoint
+- campaign_id: <campaign_id>
+- waiting_for: <等待内容>
+- scheduler_task_id: $TASK_ID
+- check_interval: <N> 分钟
+- created_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+- resume_hint: 被唤醒后读此文件，删除 scheduler task，继续 campaign
+EOF
+```
+
+**4. 唤醒后的处理**
+
+被 alice-scheduler 唤醒时，Orchestrator 会收到自唤醒 prompt。此时：
+
+1. 检查等待的事件是否已完成
+2. **已完成**：
+   - 读 `checkpoints/wakeup-*.md` 找到 `scheduler_task_id`
+   - 删除调度任务：`bash ~/.claude/skills/alice-scheduler/scripts/alice-scheduler.sh delete <task_id>`
+   - 读 `reports/live-report.md` 恢复 campaign 上下文
+   - 继续执行编排循环
+3. **未完成**：
+   - 汇报当前状态到飞书（直接输出即可）
+   - 不做任何操作，等待下次轮询
+
+### 轮询间隔参考
+
+| 等待类型 | 建议间隔 |
+|---------|---------|
+| GPU 模型训练（数小时） | 15–30 分钟 |
+| CPU 批处理（数分钟） | 3–5 分钟 |
+| CI/CD pipeline | 5–10 分钟 |
+| 等待人工审核 | 1 小时 |
+
+### 多任务并发等待
+
+若多个 task 同时在等待，可以为每个 task 创建独立的调度任务，或创建一个统一的轮询任务检查所有等待中的 task。
+
+---
+
 ## 维护约束
 
 当前会话里 `.agents/skills/...` 的已安装 skill 副本来自 Alice 安装/更新流程，不应直接修改；需要变更 skill 时，应修改 Alice 仓库里的 `alice/skills/...` 源文件，再通过安装流程同步进去。
