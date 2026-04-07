@@ -126,23 +126,39 @@ Args: --wait --effort xhigh
 
 **调用 Executor（每个 task 独立调用）：**
 
+> ⚠️ **Codex 工作目录与 sandbox 说明**
+>
+> Codex 有三种 sandbox 模式：
+> | 模式 | 允许写入范围 |
+> |------|-------------|
+> | `read-only` | 不允许写任何文件 |
+> | `workspace-write`（默认） | 只允许写 CWD + TMPDIR |
+> | `danger-full-access` | 全盘可写，不受目录限制 |
+>
+> Alice 的 workspace 目录（通常是 `~/.alice/bots/<bot>/workspace`）和目标仓库（如 `~/alice`）**是不同路径**。
+> 若 Codex 以 Alice workspace 为 CWD 启动，`workspace-write` 模式会导致目标仓库写入失败（"read-only filesystem"）。
+>
+> **解决方案**：在 `codex:rescue` 提示词里**第一行写明 `cd` 到目标仓库**，或明确告知 Codex 目标文件的绝对路径。若任务仍失败，向用户汇报 sandbox 限制，不要将 Executor 任务折叠回 Orchestrator 自己做。
+
 ```
 Skill: codex:rescue
 Args: --wait --write --effort medium
 
 提示词：
-你是 Executor，请执行以下 task：
+你是 Executor，工作目录：<target_repo_path>（先 cd 进去）。
+请执行以下 task：
 - Task 文件：<campaign_repo_path>/phases/P01/tasks/T001/task.md
 - Campaign 目标：<objective>
 - 术语表：<campaign_repo_path>/glossary.md
 
 执行步骤：
-1. 读 task.md 了解目标、范围、验收标准
-2. 执行工作
-3. 将结果写入：
+1. cd <target_repo_path>
+2. 读 task.md 了解目标、范围、验收标准
+3. 执行工作（所有文件操作使用绝对路径，或确保在 <target_repo_path> 下）
+4. 将结果写入：
    - progress.md（严格按格式规范，见 SKILL.md "progress.md 格式规范"）
    - results/（实际产物：代码 patch、测试输出等）
-4. 执行完毕将 progress.md 中 status 改为 done / blocked / failed
+5. 执行完毕将 progress.md 中 status 改为 done / blocked / failed
 ```
 
 **调用 Reviewer（每个 task 完成后立即调用）：**
@@ -202,6 +218,14 @@ grep -rl "status: blocked" <campaign_repo_path>/phases/*/tasks/*/progress.md
 2. 判断是否能自行解决（如缺少配置、路径问题等简单问题）
    - **能解决**：修复后重新调用 Executor（新上下文，附说明）
    - **不能解决**：向用户汇报，暂停等待指令
+
+**Sandbox / 文件系统 blocked 的特殊处理**：
+
+若阻塞原因包含 "read-only filesystem" / "permission denied" / "cannot write"：
+- **不要**将该 task 折叠回 Orchestrator 自己执行（这会撑爆 Orchestrator 的上下文）
+- 检查 Executor 提示词里是否有 `cd <target_repo_path>` 指令
+- 若没有，补上后重新调用 Executor
+- 若已有但仍失败，向用户汇报：`Codex sandbox 限制，目标路径 <path> 可能未在 ~/.codex/config.toml 的 trusted projects 中`，请用户确认后继续
 
 ---
 
