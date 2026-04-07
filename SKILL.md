@@ -47,20 +47,31 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Cla
 
 ### 阶段 1：初始化 Campaign Repo
 
-确认需求后，运行初始化脚本创建 campaign repo：
+**Skill 根目录**（安装路径，后续步骤均基于此）：
 
-```bash
-bash ~/.alice/skills/alice-code-army/scripts/alice-code-army.sh init \
-  --id <campaign_id> \
-  --title "<标题>" \
-  --objective "<总目标>" \
-  --repo "<源码仓库路径>"
+```
+~/.alice/skills/alice-code-army/       # Alice bot 安装路径
+# 或
+~/.claude/skills/alice-code-army/      # 独立 Claude Code 安装路径
 ```
 
-写入内容：
-- `campaign.md`：总目标、约束、当前阶段
-- `glossary.md`：初始术语表（后续各角色补充）
-- `reports/live-report.md`：进展状态表（Orchestrator 持续维护）
+Campaign repo 模板位于 skill 根目录下的相对路径 **`templates/campaign-repo/`**。
+
+确认需求后，将模板复制到目标位置作为 campaign repo：
+
+```bash
+SKILL_ROOT=~/.alice/skills/alice-code-army   # 按实际安装路径调整
+CAMPAIGN_REPO=~/.alice/codearmy/<campaign_id>
+
+cp -r "$SKILL_ROOT/templates/campaign-repo" "$CAMPAIGN_REPO"
+```
+
+复制完成后，手动填写以下文件中的占位符：
+- `campaign.md`：填入总目标、约束、源码仓库路径、当前阶段
+- `glossary.md`：填入初始术语（后续各角色发现歧义时继续补充）
+- `reports/live-report.md`：填入 campaign_id 和初始状态
+
+`_templates/` 子目录是供 Planner 按需复制的单文件模板（task.md、phase.md 等），**不需要**提前展开，Planner 在创建新 phase/task 时自行复制。
 
 ### 阶段 2：规划（Planner → Planner_Reviewer 循环）
 
