@@ -50,9 +50,7 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Cla
 **Skill 根目录**（安装路径，后续步骤均基于此）：
 
 ```
-~/.alice/skills/alice-code-army/       # Alice bot 安装路径
-# 或
-~/.claude/skills/alice-code-army/      # 独立 Claude Code 安装路径
+~/.agents/skills/codearmy/
 ```
 
 Campaign repo 模板位于 skill 根目录下的相对路径 **`templates/campaign-repo/`**。
@@ -60,7 +58,7 @@ Campaign repo 模板位于 skill 根目录下的相对路径 **`templates/campai
 确认需求后，将模板复制到目标位置作为 campaign repo：
 
 ```bash
-SKILL_ROOT=~/.alice/skills/alice-code-army   # 按实际安装路径调整
+SKILL_ROOT=~/.agents/skills/codearmy
 CAMPAIGN_REPO=~/.alice/codearmy/<campaign_id>
 
 cp -r "$SKILL_ROOT/templates/campaign-repo" "$CAMPAIGN_REPO"
@@ -146,30 +144,36 @@ Args: --wait --effort xhigh
 > | `workspace-write`（默认） | 只允许写 CWD + TMPDIR |
 > | `danger-full-access` | 全盘可写，不受目录限制 |
 >
-> Alice 的 workspace 目录（通常是 `~/.alice/bots/<bot>/workspace`）和目标仓库（如 `~/alice`）**是不同路径**。
-> 若 Codex 以 Alice workspace 为 CWD 启动，`workspace-write` 模式会导致目标仓库写入失败（"read-only filesystem"）。
+> Alice 的 workspace 目录（通常是 `~/.alice/bots/<bot>/workspace`）和 campaign repo（`~/.alice/codearmy/<campaign_id>`）**是不同路径**。
+> 若 Codex 以 Alice workspace 为 CWD 启动，`workspace-write` 模式会导致 campaign repo 和目标仓库写入失败（"read-only filesystem"）。
 >
-> **解决方案**：在 `codex:rescue` 提示词里**第一行写明 `cd` 到目标仓库**，或明确告知 Codex 目标文件的绝对路径。若任务仍失败，向用户汇报 sandbox 限制，不要将 Executor 任务折叠回 Orchestrator 自己做。
+> **解决方案**：在调用 `codex exec` 时加 `--add-dir <campaign_repo_path>` 将 campaign repo 追加进沙箱可写白名单；同时用 `-C <target_repo_path>` 设置工作目录为目标仓库。
 
-```
-Skill: codex:rescue
-Args: --wait --write --effort medium
+调用方式（直接调用 `codex exec`，不通过 `codex:rescue` wrapper，以便传入 `--add-dir` 和 `-C`）：
 
-提示词：
-你是 Executor，工作目录：<target_repo_path>（先 cd 进去）。
+```bash
+codex exec \
+  --sandbox workspace-write \
+  --add-dir <campaign_repo_path> \
+  -C <target_repo_path> \
+  --full-auto \
+  --skip-git-repo-check \
+  "你是 Executor。
+Campaign repo（可读写）：<campaign_repo_path>
+目标仓库（当前工作目录）：<target_repo_path>
+
 请执行以下 task：
 - Task 文件：<campaign_repo_path>/phases/P01/tasks/T001/task.md
 - Campaign 目标：<objective>
 - 术语表：<campaign_repo_path>/glossary.md
 
 执行步骤：
-1. cd <target_repo_path>
-2. 读 task.md 了解目标、范围、验收标准
-3. 执行工作（所有文件操作使用绝对路径，或确保在 <target_repo_path> 下）
-4. 将结果写入：
-   - progress.md（严格按格式规范，见 SKILL.md "progress.md 格式规范"）
-   - results/（实际产物：代码 patch、测试输出等）
-5. 执行完毕将 progress.md 中 status 改为 done / blocked / failed
+1. 读 task.md 了解目标、范围、验收标准
+2. 在 <target_repo_path> 下执行工作（当前工作目录已设为此路径）
+3. 将结果写入 campaign repo：
+   - <campaign_repo_path>/phases/P01/tasks/T001/progress.md（严格按格式规范）
+   - <campaign_repo_path>/phases/P01/tasks/T001/results/（实际产物）
+4. 执行完毕将 progress.md 中 status 改为 done / blocked / failed"
 ```
 
 **调用 Reviewer（每个 task 完成后立即调用）：**
@@ -234,9 +238,9 @@ grep -rl "status: blocked" <campaign_repo_path>/phases/*/tasks/*/progress.md
 
 若阻塞原因包含 "read-only filesystem" / "permission denied" / "cannot write"：
 - **不要**将该 task 折叠回 Orchestrator 自己执行（这会撑爆 Orchestrator 的上下文）
-- 检查 Executor 提示词里是否有 `cd <target_repo_path>` 指令
+- 检查 `codex exec` 调用是否带了 `--add-dir <campaign_repo_path>` 和 `-C <target_repo_path>`
 - 若没有，补上后重新调用 Executor
-- 若已有但仍失败，向用户汇报：`Codex sandbox 限制，目标路径 <path> 可能未在 ~/.codex/config.toml 的 trusted projects 中`，请用户确认后继续
+- 若已有但仍失败，向用户汇报具体路径和错误信息，请用户确认后继续
 
 ---
 
@@ -539,4 +543,10 @@ EOF
 
 ## 维护约束
 
-当前会话里 `.agents/skills/...` 的已安装 skill 副本来自 Alice 安装/更新流程，不应直接修改；需要变更 skill 时，应修改 Alice 仓库里的 `alice/skills/...` 源文件，再通过安装流程同步进去。
+`~/.agents/skills/codearmy` 是指向 workspace 的 symlink：
+
+```
+~/.agents/skills/codearmy → ~/.alice/bots/alice/workspace/codearmy
+```
+
+修改 skill 时直接编辑 workspace 内的文件，commit 并 push 到 `git@github.com:Alice-space/codearmy.git` 即可生效，无需额外同步步骤。
