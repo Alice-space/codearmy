@@ -50,7 +50,7 @@
 - 如果一个 task 同时跨多个松耦合 repo / 模块 / 产物，或者验收方式不止一条独立主线，应该继续拆分。
 - planner reviewer 只审 proposal / task 切分。
 - executor 可以改 source repo 和 task 目录。
-- reviewer 只写 task-local `reviews/` 文件，由 Alice judge 应用 verdict。
+- reviewer 只写 task-local `reviews/` 文件，由 orchestrator / judge 应用 verdict。
 - phase 数量、task 数量、拆分粒度由 planner 按目标、依赖和 write scope 决定，不要被模板样例限制。
 
 ## 开始工作前至少确认

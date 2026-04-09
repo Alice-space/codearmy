@@ -1,6 +1,6 @@
 # Plan
 
-由 Planner（Opus）生成，Orchestrator 维护版本。
+由 Planner 生成，Orchestrator 维护版本。
 
 ## Phases
 

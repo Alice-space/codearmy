@@ -23,7 +23,7 @@ __CAMPAIGN_OBJECTIVE__
 
 ## Status Tracking
 - repo truth lives in campaign frontmatter: `current_phase`, `plan_status`, `plan_round`
-- runtime campaign status should be checked via `alice-code-army.sh get` / runtime campaign APIs
+- runtime campaign status should be checked via your runtime's campaign get command or campaign APIs
 - queue / ready / blocked summary lives in `reports/live-report.md`
 
 ## Gates
@@ -41,5 +41,5 @@ __CAMPAIGN_OBJECTIVE__
 - Campaign will auto-start planning phase on first reconcile
 - Planner generates proposal, phase docs, and refined task packages
 - Planner reviewer evaluates plan
-- Human approves plan via `/alice approve-plan` only after `repo-lint --for-approval` passes
+- Human approves plan via the runtime's approve-plan command only after `repo-lint --for-approval` passes
 - Execution begins automatically after approval

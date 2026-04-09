@@ -1,9 +1,9 @@
 ---
-name: alice-code-army
-description: 以 Orchestrator-native 模式组织长期代码/研究协作。Claude Sonnet 4.6 直接作为编排者，调用 Opus 规划、Codex 审阅计划与执行、Sonnet 审阅代码，不依赖 Alice runtime 的模型调度。适用于多阶段、多子任务、多 repo 的长期并行推进。
+name: codearmy
+description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orchestrator 负责统筹，Planner 与 Reviewer 通过 Claude plugin 派发，Planner_Reviewer 与 Executor 走 Codex。适用于多阶段、多子任务、多 repo 的长期并行推进。
 ---
 
-# Alice Code Army — Orchestrator-Native Edition
+# CodeArmy — Orchestrator-Native Edition
 
 ## 设计原则
 
@@ -14,13 +14,13 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Cla
 
 ## 角色分工
 
-| 角色 | 模型 | 调用方式 | 职责 |
-|------|------|---------|------|
-| **Orchestrator** | Claude Sonnet 4.6（我自己） | 长期 session | 统筹调度、用户对话、维护进展状态表 |
-| **Planner** | Claude Opus 4.6 | `Agent(subagent_type="Plan", model="opus")` | 将目标细化为 phase / task，输出可执行计划 |
+| 角色 | 执行通道 | 调用方式 | 职责 |
+|------|---------|---------|------|
+| **Orchestrator** | 我自己 | 当前长期 session | 统筹调度、用户对话、维护进展状态表 |
+| **Planner** | Claude plugin task | `./scripts/claude-plugin.sh task --json --effort high ...` | 将目标细化为 phase / task，输出可执行计划 |
 | **Planner_Reviewer** | Codex GPT-5.4 xhigh | `codex:rescue --effort xhigh` | 审阅计划，给出三路判决 |
-| **Executor** | Codex GPT-5.4 medium | `codex:rescue --effort medium` | 执行具体 task，写入 progress.md 和 results/ |
-| **Reviewer** | Claude Sonnet 4.6 | `Agent(model="sonnet")` | Task 级代码/结果审阅，写入 reviews/Rxxx.md |
+| **Executor** | Codex GPT-5.4 medium | `codex exec --sandbox workspace-write ...` | 执行具体 task，写入 progress.md 和 results/ |
+| **Reviewer** | Claude plugin task | `./scripts/claude-plugin.sh task --json --effort high ...` | Task 级代码/结果审阅，写入 reviews/Rxxx.md |
 
 ## 何时使用
 
@@ -47,39 +47,34 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Cla
 
 ### 阶段 1：初始化 Campaign Repo
 
-**Skill 根目录**（安装路径，后续步骤均基于此）：
-
-```
-~/.agents/skills/codearmy/
-```
-
-Campaign repo 模板位于 skill 根目录下的相对路径 **`templates/campaign-repo/`**。
-
-确认需求后，将模板复制到目标位置作为 campaign repo：
+Campaign repo 模板位于当前 checkout 的 `templates/campaign-repo/`。优先在 `codearmy` 仓库根目录下运行自带脚本，而不是手工 `cp`：
 
 ```bash
-SKILL_ROOT=~/.agents/skills/codearmy
-CAMPAIGN_REPO=~/.alice/codearmy/<campaign_id>
-
-cp -r "$SKILL_ROOT/templates/campaign-repo" "$CAMPAIGN_REPO"
+./scripts/init-campaign-repo.sh \
+  "$CAMPAIGN_REPO" \
+  --campaign-id <campaign_id> \
+  --title "<campaign_title>" \
+  --objective "<objective>"
 ```
 
-复制完成后，手动填写以下文件中的占位符：
-- `campaign.md`：填入总目标、约束、源码仓库路径、当前阶段
-- `glossary.md`：填入初始术语（后续各角色发现歧义时继续补充）
-- `reports/live-report.md`：填入 campaign_id 和初始状态
+脚本会复制模板、填充 `campaign.md` 中的常用占位符，并保留其余文件结构供 Planner 按需展开。若目标目录已存在且非空，脚本默认拒绝覆盖；明确要重建时，可追加 `--force`。
 
 `_templates/` 子目录是供 Planner 按需复制的单文件模板（task.md、phase.md 等），**不需要**提前展开，Planner 在创建新 phase/task 时自行复制。
 
 ### 阶段 2：规划（Planner → Planner_Reviewer 循环）
 
-**调用 Planner：**
+**调用 Planner（Claude plugin）：**
 
-```python
-Agent(
-    subagent_type="Plan",
-    model="opus",
-    prompt="""
+先确认 Claude plugin 可用：
+
+```bash
+./scripts/claude-plugin.sh setup --json
+```
+
+然后派发 Planner：
+
+```bash
+PLANNER_PROMPT=$(cat <<'EOF'
 你是 Planner，请为以下 campaign 制定完整执行计划。
 
 Campaign 目标：<objective>
@@ -94,8 +89,10 @@ Campaign repo：<campaign_repo_path>
 3. 每个 task 必须包含：目标、要修改的文件/模块、验收标准、产物路径
 4. 将计划写入 <campaign_repo_path>/plan.md 和 phases/ 目录
 5. 若发现术语歧义，补充 glossary.md
-"""
+EOF
 )
+
+./scripts/claude-plugin.sh task --json --effort high "$PLANNER_PROMPT"
 ```
 
 **调用 Planner_Reviewer：**
@@ -144,8 +141,7 @@ Args: --wait --effort xhigh
 > | `workspace-write`（默认） | 只允许写 CWD + TMPDIR |
 > | `danger-full-access` | 全盘可写，不受目录限制 |
 >
-> Alice 的 workspace 目录（通常是 `~/.alice/bots/<bot>/workspace`）和 campaign repo（`~/.alice/codearmy/<campaign_id>`）**是不同路径**。
-> 若 Codex 以 Alice workspace 为 CWD 启动，`workspace-write` 模式会导致 campaign repo 和目标仓库写入失败（"read-only filesystem"）。
+> 若 Codex 的 CWD、campaign repo、目标仓库不在同一可写范围内，`workspace-write` 模式会导致 campaign repo 或目标仓库写入失败（"read-only filesystem"）。
 >
 > **解决方案**：在调用 `codex exec` 时加 `--add-dir <campaign_repo_path>` 将 campaign repo 追加进沙箱可写白名单；同时用 `-C <target_repo_path>` 设置工作目录为目标仓库。
 
@@ -176,12 +172,10 @@ Campaign repo（可读写）：<campaign_repo_path>
 4. 执行完毕将 progress.md 中 status 改为 done / blocked / failed"
 ```
 
-**调用 Reviewer（每个 task 完成后立即调用）：**
+**调用 Reviewer（每个 task 完成后立即调用，走 Claude plugin）：**
 
-```python
-Agent(
-    model="sonnet",
-    prompt="""
+```bash
+REVIEWER_PROMPT=$(cat <<'EOF'
 你是 Reviewer，请审阅以下 task 的执行结果：
 - Task 文件：<campaign_repo_path>/phases/P01/tasks/T001/task.md
 - 执行记录：<campaign_repo_path>/phases/P01/tasks/T001/progress.md
@@ -194,19 +188,18 @@ Agent(
 判决（写入 reviews/R001.md frontmatter verdict 字段）：
 - approve：全部验收标准通过
 - rework：有问题需要修改（写明具体问题和修改建议）
-"""
+EOF
 )
+
+./scripts/claude-plugin.sh task --json --effort high "$REVIEWER_PROMPT"
 ```
 
 ### 阶段 4：验收（最终 Planner 验收）
 
 所有 phase 全部完成后，调用 Planner 做最终目标验收：
 
-```python
-Agent(
-    subagent_type="Plan",
-    model="opus",
-    prompt="""
+```bash
+FINAL_ACCEPTANCE_PROMPT=$(cat <<'EOF'
 请阅读以下内容，判断 campaign 总目标是否已达成：
 - Campaign 目标：<campaign_repo_path>/campaign.md
 - 所有 task 完成记录：<campaign_repo_path>/phases/
@@ -214,8 +207,10 @@ Agent(
 
 如果目标已达成：在 campaign.md 中写入 status=completed，输出总结报告到 reports/final-report.md。
 如果目标未达成：写明差距，提出下一轮计划方向，写入 plan.md，Orchestrator 将发起新一轮规划循环。
-"""
+EOF
 )
+
+./scripts/claude-plugin.sh task --json --effort high "$FINAL_ACCEPTANCE_PROMPT"
 ```
 
 ---
@@ -371,11 +366,12 @@ LOOP:
 
 ## 用户控制命令
 
-每次 `codex:rescue` 或 `Agent` 返回后，检查收件箱：
+每次子任务返回后，检查收件箱：
 
 ```bash
-cat ~/.alice/codearmy/{campaign_id}/control.md 2>/dev/null && \
-  rm -f ~/.alice/codearmy/{campaign_id}/control.md
+CONTROL_FILE="<runtime-state-root>/<campaign_id>/control.md"
+
+cat "$CONTROL_FILE" 2>/dev/null && rm -f "$CONTROL_FILE"
 ```
 
 收件箱格式：
@@ -390,8 +386,10 @@ message: "附加说明（可选）"
 用户写入方式：
 
 ```bash
-mkdir -p ~/.alice/codearmy/<campaign_id>
-cat > ~/.alice/codearmy/<campaign_id>/control.md << 'EOF'
+CONTROL_FILE="<runtime-state-root>/<campaign_id>/control.md"
+
+mkdir -p "$(dirname "$CONTROL_FILE")"
+cat > "$CONTROL_FILE" << 'EOF'
 ---
 command: pause
 message: 等我审阅 P01 的结果
@@ -453,9 +451,10 @@ Alice 重启或编排进程中断：
 不打断编排进程，fork 一个只读 session：
 
 ```bash
-SESSION_FILE="$HOME/.claude/projects/<project_hash>/<session_id>.jsonl"
+CLAUDE_SESSION_DIR="<claude-session-store>/<project_hash>"
+SESSION_FILE="$CLAUDE_SESSION_DIR/<session_id>.jsonl"
 FORK_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
-cp "$SESSION_FILE" "$HOME/.claude/projects/<project_hash>/${FORK_ID}.jsonl"
+cp "$SESSION_FILE" "$CLAUDE_SESSION_DIR/${FORK_ID}.jsonl"
 claude --resume "$FORK_ID"
 ```
 
@@ -479,12 +478,14 @@ claude --resume "$FORK_ID"
 **2. 创建自唤醒任务**
 
 ```bash
+ALICE_SCHEDULER_BIN="${ALICE_SCHEDULER_BIN:?set to your alice-scheduler entrypoint}"
+
 # 获取当前 session 信息
-SESSION_INFO=$(bash ~/.claude/skills/alice-scheduler/scripts/alice-scheduler.sh current-session)
+SESSION_INFO=$("$ALICE_SCHEDULER_BIN" current-session)
 SESSION_KEY=$(echo "$SESSION_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin)['session_key'])")
 
 # 创建轮询任务（每 N 分钟唤醒一次）
-bash ~/.claude/skills/alice-scheduler/scripts/alice-scheduler.sh create << JSON
+"$ALICE_SCHEDULER_BIN" create << JSON
 {
   "title": "codearmy-wakeup-<campaign_id>-<task_id>",
   "schedule": { "type": "interval", "every_seconds": <check_interval_seconds> },
@@ -519,7 +520,7 @@ EOF
 1. 检查等待的事件是否已完成
 2. **已完成**：
    - 读 `checkpoints/wakeup-*.md` 找到 `scheduler_task_id`
-   - 删除调度任务：`bash ~/.claude/skills/alice-scheduler/scripts/alice-scheduler.sh delete <task_id>`
+   - 删除调度任务：`"$ALICE_SCHEDULER_BIN" delete <task_id>`
    - 读 `reports/live-report.md` 恢复 campaign 上下文
    - 继续执行编排循环
 3. **未完成**：
@@ -543,10 +544,6 @@ EOF
 
 ## 维护约束
 
-`~/.agents/skills/codearmy` 是指向 workspace 的 symlink：
-
-```
-~/.agents/skills/codearmy → ~/.alice/bots/alice/workspace/codearmy
-```
-
-修改 skill 时直接编辑 workspace 内的文件，commit 并 push 到 `git@github.com:Alice-space/codearmy.git` 即可生效，无需额外同步步骤。
+- 不要假设固定安装路径、固定 symlink，或某个唯一 checkout。
+- 修改当前实际被加载的 `codearmy` checkout，并保持 `SKILL.md`、`templates/`、`scripts/` 一致。
+- 若你的运行环境是复制安装而不是 symlink，修改后需要重新部署该 checkout 才会生效。
