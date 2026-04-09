@@ -10,7 +10,7 @@ codearmy is a skill bundle for long-running multi-phase engineering tasks — pl
 
 codearmy uses five roles, each run in its own agent invocation. Role models are fixed; provider routing is runtime-dependent:
 
-| Role | Execution path | Responsibility |
+| Role | Route | Responsibility |
 |------|----------------|---------------|
 | **Orchestrator** | Current session (you) | Coordinates all agents, maintains progress, talks to the user |
 | **Planner** | Claude `opus[1m]`, routed by host runtime | Decomposes the goal into phases and tasks |
@@ -39,7 +39,7 @@ campaign-repo/
 │       └── tasks/
 │           └── T001/
 │               ├── task.md      # Task metadata and acceptance criteria
-│               ├── progress.md  # Executor execution record
+│               ├── progress.md  # Executor progress record
 │               ├── results/     # Actual artifacts (patches, test output…)
 │               └── reviews/     # Reviewer records (R001.md…)
 ├── checkpoints/         # Phase-completion checkpoints for recovery
@@ -127,7 +127,7 @@ If the target directory already exists and you intentionally want to replace it,
 - A host runtime: [Claude Code](https://claude.ai/code) or [Codex](https://github.com/openai/codex)
 - For Codex-hosted runs that need Claude-family models: Node.js plus the ClaudeAgent plugin runtime for `scripts/claude-plugin.sh`
 - For Claude Code-hosted runs that need CodeX-family models: a CodeX plugin installed in that Claude Code environment
-- If you use direct `codex exec` for Executor work, `codex` must be on your PATH
+- For Codex-hosted Executor work, the Codex runtime and tooling must be available
 
 ---
 

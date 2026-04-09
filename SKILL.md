@@ -42,7 +42,7 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orc
 | **Orchestrator** | 我自己 | 当前长期 session | 统筹调度、用户对话、维护进展状态表 |
 | **Planner** | Claude `opus[1m]`，运行时分流 | Claude Code 宿主走原生 `spawn_agent` / subagent；Codex 宿主走 Claude plugin | 将目标细化为 phase / task，输出可执行计划 |
 | **Planner_Reviewer** | Codex `gpt-5.4 xhigh`，运行时分流 | Codex 宿主走 `spawn_agent`；Claude Code 宿主走 CodeX plugin | 审阅计划，给出三路判决 |
-| **Executor** | Codex `gpt-5.4 high`，运行时分流 | Codex 宿主走 `spawn_agent` / `codex exec`；Claude Code 宿主走 CodeX plugin | 执行具体 task，写入 progress.md 和 results/ |
+| **Executor** | Codex `gpt-5.4 high`，运行时分流 | Codex 宿主走 `spawn_agent`；Claude Code 宿主走 CodeX plugin | 执行具体 task，写入 progress.md 和 results/ |
 | **Reviewer** | Claude `sonnet`，运行时分流 | Claude Code 宿主走原生 `spawn_agent` / subagent；Codex 宿主走 Claude plugin | Task 级代码/结果审阅，写入 reviews/Rxxx.md |
 
 ## 何时使用
@@ -173,20 +173,14 @@ EOF
 >
 > 若 Codex 的 CWD、campaign repo、目标仓库不在同一可写范围内，`workspace-write` 模式会导致 campaign repo 或目标仓库写入失败（"read-only filesystem"）。
 >
-> **解决方案**：在调用 `codex exec` 时加 `--add-dir <campaign_repo_path>` 将 campaign repo 追加进沙箱可写白名单；同时用 `-C <target_repo_path>` 设置工作目录为目标仓库。
+> **解决方案**：无论你通过哪种原生 Codex 调度方式拉起 Executor，都要确保 `campaign_repo_path` 和 `target_repo_path` 同时处于该 Executor 的可写范围内。
 
-由于 Executor 固定使用 **Codex `gpt-5.4 high`**，当当前宿主是 **Codex** 时，可以直接调用 `codex exec`，不通过 wrapper，以便传入 `--add-dir` 和 `-C`：
+由于 Executor 固定使用 **Codex `gpt-5.4 high`**，当当前宿主是 **Codex** 时，应直接使用原生 `spawn_agent` 拉起该 Executor，并把下面这份 task prompt 交给它：
 
-```bash
-codex exec \
-  --sandbox workspace-write \
-  --add-dir <campaign_repo_path> \
-  -C <target_repo_path> \
-  --full-auto \
-  --skip-git-repo-check \
-  "你是 Executor。
+```text
+你是 Executor。
 Campaign repo（可读写）：<campaign_repo_path>
-目标仓库（当前工作目录）：<target_repo_path>
+目标仓库（可读写）：<target_repo_path>
 
 请执行以下 task：
 - Task 文件：<campaign_repo_path>/phases/P01/tasks/T001/task.md
@@ -195,11 +189,11 @@ Campaign repo（可读写）：<campaign_repo_path>
 
 执行步骤：
 1. 读 task.md 了解目标、范围、验收标准
-2. 在 <target_repo_path> 下执行工作（当前工作目录已设为此路径）
+2. 在 <target_repo_path> 下执行工作
 3. 将结果写入 campaign repo：
    - <campaign_repo_path>/phases/P01/tasks/T001/progress.md（严格按格式规范）
    - <campaign_repo_path>/phases/P01/tasks/T001/results/（实际产物）
-4. 执行完毕将 progress.md 中 status 改为 done / blocked / failed"
+4. 执行完毕将 progress.md 中 status 改为 done / blocked / failed
 ```
 
 其他 Executor 派发方式：
@@ -269,7 +263,7 @@ grep -rl "status: blocked" <campaign_repo_path>/phases/*/tasks/*/progress.md
 
 若阻塞原因包含 "read-only filesystem" / "permission denied" / "cannot write"：
 - **不要**将该 task 折叠回 Orchestrator 自己执行（这会撑爆 Orchestrator 的上下文）
-- 若实际执行通道是 Codex / CodeX agent，检查 `codex exec` 调用是否带了 `--add-dir <campaign_repo_path>` 和 `-C <target_repo_path>`
+- 若实际执行通道是 Codex / CodeX agent，检查该 Executor 是否同时拥有 `<campaign_repo_path>` 和 `<target_repo_path>` 的可写权限
 - 若没有，补上后重新调用 Executor
 - 若已有但仍失败，向用户汇报具体路径和错误信息，请用户确认后继续
 

@@ -54,4 +54,4 @@ if [[ -z "$PLUGIN_ROOT" ]]; then
   exit 1
 fi
 
-exec node "$PLUGIN_ROOT/scripts/claude-companion.mjs" "$@"
+node "$PLUGIN_ROOT/scripts/claude-companion.mjs" "$@"
