@@ -10,10 +10,10 @@
 | Campaign | 一次完整的多阶段任务运行 | |
 | Phase | Campaign 中必须串行的阶段 | 同一 phase 内的 task 可并行 |
 | Task | 一个可独立执行的最小工作单元 | 对应一次 Executor 调用 |
-| Executor | 负责执行具体 task 的 Codex agent | |
-| Reviewer | 负责审阅 task 执行结果的 Claude plugin reviewer agent | |
-| Planner | 负责制定整体计划的 Claude plugin planner agent | |
-| Planner_Reviewer | 负责审阅计划的 Codex agent | |
+| Executor | 负责执行具体 task 的执行 agent | 固定模型 Codex `gpt-5.4 high`，通道按宿主运行时分流 |
+| Reviewer | 负责审阅 task 执行结果的审阅 agent | 固定模型 Claude `sonnet`，通道按宿主运行时分流 |
+| Planner | 负责制定整体计划的规划 agent | 固定模型 Claude `opus[1m]`，通道按宿主运行时分流 |
+| Planner_Reviewer | 负责审阅计划的计划审稿 agent | 固定模型 Codex `gpt-5.4 xhigh`，通道按宿主运行时分流 |
 | Orchestrator | 负责统筹调度的当前会话 | |
 
 ## 项目专有术语

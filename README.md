@@ -1,22 +1,29 @@
 # codearmy
 
-**Orchestrator-native long-running code and research campaigns for Claude Code.**
+**Orchestrator-native long-running code and research campaigns for Claude Code and Codex runtimes.**
 
-codearmy is a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) that lets Claude orchestrate multi-phase engineering tasks — planning, reviewing, executing, and verifying — using a persistent **campaign repo** as the shared source of truth. It is designed for tasks that span hours to days, require multiple agents working in parallel, and need to survive interruptions and restarts.
+codearmy is a skill bundle for long-running multi-phase engineering tasks — planning, reviewing, executing, and verifying — using a persistent **campaign repo** as the shared source of truth. It is designed to run under either Claude Code or Codex-family hosts, survive interruptions, and keep role coordination outside the main orchestrator context. The role models stay fixed; only the invocation route changes with the host runtime.
 
 ---
 
 ## How it works
 
-codearmy uses five roles, each run in its own agent invocation:
+codearmy uses five roles, each run in its own agent invocation. Role models are fixed; provider routing is runtime-dependent:
 
 | Role | Execution path | Responsibility |
 |------|----------------|---------------|
 | **Orchestrator** | Current session (you) | Coordinates all agents, maintains progress, talks to the user |
-| **Planner** | Claude plugin task | Decomposes the goal into phases and tasks |
-| **Planner_Reviewer** | Codex xhigh | Audits the plan before execution starts |
-| **Executor** | Codex medium | Implements each task, writes results to the campaign repo |
-| **Reviewer** | Claude plugin task | Reviews each task's output against acceptance criteria |
+| **Planner** | Claude `opus[1m]`, routed by host runtime | Decomposes the goal into phases and tasks |
+| **Planner_Reviewer** | Codex `gpt-5.4 xhigh`, routed by host runtime | Audits the plan before execution starts |
+| **Executor** | Codex `gpt-5.4 high`, routed by host runtime | Implements each task, writes results to the campaign repo |
+| **Reviewer** | Claude `sonnet`, routed by host runtime | Reviews each task's output against acceptance criteria |
+
+Routing matrix:
+
+| Host runtime | Claude-family model | CodeX-family model |
+|------|----------------------|--------------------|
+| **Claude Code** | native `spawn_agent` / subagent | installed CodeX plugin |
+| **Codex** | Claude plugin such as `claudeagent` | native `spawn_agent` |
 
 Agents communicate via a **campaign repo** — a local directory of markdown files — not by passing large messages to each other. This keeps every agent's context small and makes the whole campaign resumable after interruption.
 
@@ -79,6 +86,11 @@ Then invoke it in Claude Code:
 /codearmy <your campaign goal>
 ```
 
+When this skill is running inside Claude Code:
+
+- `Planner=Claude opus[1m]` and `Reviewer=Claude sonnet` should use native `spawn_agent` / subagents.
+- `Planner_Reviewer=Codex gpt-5.4 xhigh` and `Executor=Codex gpt-5.4 high` should use the CodeX plugin installed in that Claude Code environment.
+
 ### With Alice bot
 
 If you are running [Alice](https://github.com/Alice-space/alice), install it as a bundled skill:
@@ -88,6 +100,11 @@ cp -r /path/to/codearmy <alice-skills-dir>/codearmy
 ```
 
 Trigger it with a `#work` message in your Feishu conversation.
+
+When this skill is running inside Codex or a Codex-hosted Alice runtime:
+
+- `Planner_Reviewer=Codex gpt-5.4 xhigh` and `Executor=Codex gpt-5.4 high` should use native `spawn_agent`.
+- `Planner=Claude opus[1m]` and `Reviewer=Claude sonnet` should use the Claude plugin, for example the bundled `claudeagent` helper described below.
 
 ### Campaign repo bootstrap
 
@@ -107,20 +124,22 @@ If the target directory already exists and you intentionally want to replace it,
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code) (CLI or IDE extension)
-- [Codex](https://github.com/openai/codex) CLI (`codex` must be on your PATH)
-- Node.js on your PATH (`scripts/claude-plugin.sh` shells out to `node`)
-- Claude access for the current session, plus the ClaudeAgent plugin runtime available to `scripts/claude-plugin.sh`
+- A host runtime: [Claude Code](https://claude.ai/code) or [Codex](https://github.com/openai/codex)
+- For Codex-hosted runs that need Claude-family models: Node.js plus the ClaudeAgent plugin runtime for `scripts/claude-plugin.sh`
+- For Claude Code-hosted runs that need CodeX-family models: a CodeX plugin installed in that Claude Code environment
+- If you use direct `codex exec` for Executor work, `codex` must be on your PATH
 
 ---
 
 ## Key design decisions
 
-**Orchestrator does not implement.** Its context is reserved for coordination and high-level decisions. All implementation goes to Executor subagents.
+**Orchestrator does not implement.** Its context is reserved for coordination and high-level decisions. All implementation goes to subagents.
+
+**While subagents are running, the Orchestrator only supervises.** It may watch status, update the live report, react to `blocked` states, and handle user input. It must not jump in to do the subagent's work, and it must not exit the campaign just because a subagent is still running.
 
 **Campaign repo is the message bus.** Agents write to the repo; the Orchestrator reads the repo to track progress. No large message passing between agents.
 
-**Planner and Reviewer run through the Claude plugin.** This keeps the skill model-agnostic and avoids hard-coding a specific Claude model into the repo docs.
+**Models are fixed; routing is not.** `Planner=Claude opus[1m]`, `Planner_Reviewer=Codex gpt-5.4 xhigh`, `Executor=Codex gpt-5.4 high`, `Reviewer=Claude sonnet`; only the host runtime decides whether that fixed role call goes through native `spawn_agent` or the opposite-side plugin.
 
 **Every task has explicit acceptance criteria.** The Reviewer checks each one and returns `approve` or `rework`. The Orchestrator applies the verdict.
 
@@ -142,11 +161,11 @@ Codex runs in `workspace-write` mode by default, which only allows writes to the
 
 ```
 codearmy/
-├── SKILL.md                    # Full skill definition (loaded by Claude Code)
+├── SKILL.md                    # Full skill definition
 ├── agents/
 │   └── openai.yaml             # Agent interface descriptor
 ├── scripts/
-│   ├── claude-plugin.sh        # ClaudeAgent wrapper with plugin auto-discovery
+│   ├── claude-plugin.sh        # Codex-side ClaudeAgent wrapper with plugin auto-discovery
 │   └── init-campaign-repo.sh   # Campaign repo bootstrap helper
 └── templates/
     └── campaign-repo/          # Starter template for a new campaign repo
@@ -157,7 +176,8 @@ codearmy/
 ## Related
 
 - [Alice](https://github.com/Alice-space/alice) — the Feishu bot runtime that hosts this skill
-- [Claude Code](https://claude.ai/code) — the AI coding environment this skill targets
+- [Claude Code](https://claude.ai/code) — one supported host runtime
+- [Codex](https://github.com/openai/codex) — the other supported host runtime
 
 ---
 
