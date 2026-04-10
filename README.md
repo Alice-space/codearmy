@@ -25,6 +25,8 @@ Routing matrix:
 | **Claude Code** | native `spawn_agent` / subagent | installed CodeX plugin |
 | **Codex** | Claude plugin such as `claudeagent` | native `spawn_agent` |
 
+In Codex, native `spawn_agent` is not a durability layer. Use it only for synchronous stages where the current Orchestrator session will stay alive and `wait_agent` until the child reaches a terminal state. If an Executor task may outlive the current parent rollout, persist state to the campaign repo first and hand execution off to runtime `campaign_dispatch:*` / `campaign_wake:*` automation or a scheduler wake-up instead of fire-and-forget `spawn_agent`.
+
 Agents communicate via a **campaign repo** — a local directory of markdown files — not by passing large messages to each other. This keeps every agent's context small and makes the whole campaign resumable after interruption.
 
 ```
@@ -103,7 +105,8 @@ Trigger it with a `#work` message in your Feishu conversation.
 
 When this skill is running inside Codex or a Codex-hosted Alice runtime:
 
-- `Planner_Reviewer=Codex gpt-5.4 xhigh` and `Executor=Codex gpt-5.4 high` should use native `spawn_agent`.
+- `Planner_Reviewer=Codex gpt-5.4 xhigh` and `Executor=Codex gpt-5.4 high` should use native `spawn_agent` only when the current parent session will remain alive and explicitly `wait_agent` for completion.
+- If the Executor may run longer than the current parent rollout can stay alive, do not treat `spawn_agent` as fire-and-forget; persist state to the campaign repo and resume through runtime `campaign_dispatch:*` / `campaign_wake:*` automation or a scheduler wake-up.
 - `Planner=Claude opus[1m]` and `Reviewer=Claude sonnet` should use the Claude plugin, for example the bundled `claudeagent` helper described below.
 
 ### Campaign repo bootstrap
@@ -139,7 +142,7 @@ If the target directory already exists and you intentionally want to replace it,
 
 **Campaign repo is the message bus.** Agents write to the repo; the Orchestrator reads the repo to track progress. No large message passing between agents.
 
-**Models are fixed; routing is not.** `Planner=Claude opus[1m]`, `Planner_Reviewer=Codex gpt-5.4 xhigh`, `Executor=Codex gpt-5.4 high`, `Reviewer=Claude sonnet`; only the host runtime decides whether that fixed role call goes through native `spawn_agent` or the opposite-side plugin.
+**Models are fixed; routing is not.** `Planner=Claude opus[1m]`, `Planner_Reviewer=Codex gpt-5.4 xhigh`, `Executor=Codex gpt-5.4 high`, `Reviewer=Claude sonnet`; only the host runtime decides whether that fixed role call goes through native `spawn_agent` or the opposite-side plugin. In Codex, native `spawn_agent` still requires the Orchestrator to remain alive and `wait_agent`; it is not a durable background worker by itself.
 
 **Every task has explicit acceptance criteria.** The Reviewer checks each one and returns `approve` or `rework`. The Orchestrator applies the verdict.
 
