@@ -9,6 +9,8 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orc
 
 - **Orchestrator 只做统筹，不做具体工作**：维护进展状态表、调度 subagent、和用户对话。自己的上下文专用于高层决策，不沉溺于执行细节。
 - **Sub agent 工作期间，Orchestrator 只监护，不接手实现**：当 Planner / Planner_Reviewer / Executor / Reviewer 已经被派发出去后，Orchestrator 只能查看状态、记录进展、处理用户指令和决定下一步；**不得自己补做 task、不得代替 sub agent 工作、不得因为等待就退出编排**。
+- **在 Codex 宿主中，`spawn_agent` 不是 fire-and-forget**：若通过原生 `spawn_agent` 拉起 sub agent，主编排必须继续存活，并通过 `wait_agent`（可长等待或轮询）持续等待到 sub agent 到达稳定状态。实测中，若父 `codex exec` / 主 rollout 过早结束，即便 sub agent 已成功 spawn，也可能随父进程一同失活，导致没有产物落盘。
+- **`spawn_agent` 不是 durability 机制**：如果当前 Orchestrator 不能保证自己一直活到 sub agent 完成，就不要把 raw `spawn_agent` 当成长期执行方案。应先把 task 状态和上下文写入 campaign repo，再交给 runtime `campaign_dispatch:*` / `campaign_wake:*` 自动化或 `alice-scheduler` 自唤醒去续跑；`spawn_agent` 只适合父编排明确常驻的同步阶段。
 - **Campaign repo 是所有 subagent 的共享通信总线**：subagent 将产出写入 campaign repo，Orchestrator 读取 repo 了解进展，不直接接受 subagent 大段汇报。
 - **编排宿主直接说话即可发飞书**：文字输出通过 `onThinking → sendAgentMessage` 自动推送飞书，不需要 alice-message。
 - **统一术语**：维护 `glossary.md`，所有角色对相同事物使用相同称呼。
@@ -148,7 +150,7 @@ EOF
 
 **每个 Phase：**
 1. 拉起当前 phase 下所有 `status=pending` 的 task（并行调用多个 Executor）
-2. 等所有 task 完成（`--wait` 阻塞）
+2. 等所有 task 完成（若使用原生 `spawn_agent`，则必须 `wait_agent`；不要在派发后立即结束主流程）
 3. 扫描是否有 blocked task，有则先处理（见"处理 Blocked Task"）
 4. 对每个完成的 task 调用 Reviewer 做 task 级审阅
 5. 审阅 approve → 标记 `status=done`；rework → 重新调用 Executor
@@ -159,6 +161,7 @@ EOF
 - sub agent 一旦已派发，Orchestrator 只允许监护状态、等待结果、记录 `live-report.md`、处理 `blocked` 和用户指令。
 - **不要**因为某个 sub agent 跑得慢，就自己下场写代码、补 plan、补 review。
 - **不要**在 sub agent 仍在运行时退出当前编排；除非用户明确要求暂停/终止，或所有工作都已收敛到可暂停状态。
+- 若 sub agent 是通过 Codex 原生 `spawn_agent` 拉起，**必须显式 `wait_agent` 并保持主编排存活**；不要把“已派发”误当成“可以结束当前主流程”。
 
 **调用 Executor（每个 task 独立调用；固定 Codex `gpt-5.4 high`，按运行时分流矩阵派发）：**
 
@@ -195,6 +198,12 @@ Campaign repo（可读写）：<campaign_repo_path>
    - <campaign_repo_path>/phases/P01/tasks/T001/results/（实际产物）
 4. 执行完毕将 progress.md 中 status 改为 done / blocked / failed
 ```
+
+**重要运行经验（Codex 宿主）**：
+
+- 正确模式是：`spawn_agent` → 记录 task 进入 `executing` → `wait_agent` 等待该 Executor 到达终态 → 再读取 `progress.md` / `results/` 决定是否进入 Reviewer。
+- 不要把 `spawn_agent` 当作 fire-and-forget。若主 `codex exec` / 主 rollout 在 `spawn_agent` 后立即结束，sub agent 可能不会继续独立运行到产物落盘。
+- 若无法保证父编排持续存活，应尽快把任务切回 campaign repo 驱动的 runtime `dispatch/wake` 路径，而不是继续在顶层会话里“赌”这次 `wait_agent` 能等完。
 
 其他 Executor 派发方式：
 
@@ -509,26 +518,22 @@ claude --resume "$FORK_ID"
 
 **2. 创建自唤醒任务**
 
+> **关键简化**：`alice-scheduler create` 会**自动注入** `resume_session_key`（当前会话 key）和 `action.resume_thread_id`（当前 thread）——无需手动调用 `current-session` 再拼接。直接写 JSON heredoc 即可，留空这两个字段或直接不填都行。
+
 ```bash
-ALICE_SCHEDULER_BIN="${ALICE_SCHEDULER_BIN:?set to your alice-scheduler entrypoint}"
-
-# 获取当前 session 信息
-SESSION_INFO=$("$ALICE_SCHEDULER_BIN" current-session)
-SESSION_KEY=$(echo "$SESSION_INFO" | python3 -c "import sys,json; print(json.load(sys.stdin)['session_key'])")
-
-# 创建轮询任务（每 N 分钟唤醒一次）
-"$ALICE_SCHEDULER_BIN" create << JSON
+/home/lizhihao/.claude/skills/alice-scheduler/scripts/alice-scheduler.sh create << 'JSON'
 {
-  "title": "codearmy-wakeup-<campaign_id>-<task_id>",
+  "title": "codearmy-wakeup-<campaign_id>-<phase>",
   "schedule": { "type": "interval", "every_seconds": <check_interval_seconds> },
-  "resume_session_key": "$SESSION_KEY",
   "action": {
     "type": "run_llm",
-    "prompt": "【codearmy 自唤醒】campaign_id=<campaign_id>，正在等待：<等待内容描述>。\n\n请检查状态：<检查方法，如 check_command 或读取某个文件>。\n\n如果等待已完成：\n1. 读取 <campaign_repo_path>/reports/live-report.md 了解当前进展\n2. 删除本调度任务（task ID 见 campaign repo 的 checkpoints/ 最新文件）\n3. 继续 campaign 编排循环（见 SKILL.md 编排循环伪代码）\n\n如果等待未完成：\n- 汇报当前状态（预计剩余时间等）\n- 保持任务继续轮询，不做任何操作"
+    "prompt": "【codearmy 自唤醒】campaign_id=<campaign_id>，正在等待：<等待内容描述>。\n\n请检查状态：<检查方法，如 squeue -u <user>、tail slurm log 等>。\n\n## 任务背景（必须写清楚）\n- job ID：<job_id>\n- 集群 SSH alias：<IHEPAI|IHEP>\n- 工程目录：<workdir>\n- eval 命令：<eval command>\n- 基线对比：<baseline metrics>\n\n如果等待已完成：\n1. 读取 <campaign_repo_path>/checkpoints/wakeup-*.md 找到 scheduler_task_id\n2. 删除本调度任务：alice-scheduler delete <task_id>\n3. 读 reports/live-report.md 恢复上下文，继续 campaign 编排循环\n\n如果等待未完成：\n- 输出简短状态（当前 epoch/loss/预计剩余），不做任何操作"
   }
 }
 JSON
 ```
+
+**prompt 质量决定唤醒成功率**：必须把 job ID、集群、eval 脚本、基线指标直接写进 prompt，不能依赖"读 campaign repo 自行发现"——唤醒时上下文为空，缺失信息会导致 Orchestrator 无法行动。
 
 **3. 将调度任务 ID 记录到 checkpoint**
 
@@ -563,7 +568,8 @@ EOF
 
 | 等待类型 | 建议间隔 |
 |---------|---------|
-| GPU 模型训练（数小时） | 15–30 分钟 |
+| GPU 模型训练（>12h，如 24-30h 长训练） | 2–3 小时 |
+| GPU 模型训练（数小时，<12h） | 30–60 分钟 |
 | CPU 批处理（数分钟） | 3–5 分钟 |
 | CI/CD pipeline | 5–10 分钟 |
 | 等待人工审核 | 1 小时 |
