@@ -15,8 +15,8 @@ codearmy uses five roles, each run in its own agent invocation. Role models are 
 | **Orchestrator** | Current session (you) | Coordinates all agents, maintains progress, talks to the user |
 | **Planner** | Claude `opus[1m]`, routed by host runtime | Decomposes the goal into phases and tasks |
 | **Planner_Reviewer** | Codex `gpt-5.4 xhigh`, routed by host runtime | Audits the plan before execution starts |
-| **Executor** | Codex `gpt-5.4 high`, routed by host runtime | Implements each task, writes results to the campaign repo |
-| **Reviewer** | Claude `sonnet`, routed by host runtime | Reviews each task's output against acceptance criteria |
+| **Executor** | Claude `sonnet 4.6`, routed by host runtime | Implements each task, writes results to the campaign repo |
+| **Reviewer** | Codex `gpt-5.4 xhigh`, routed by host runtime | Reviews each task's output against acceptance criteria |
 
 Routing matrix:
 

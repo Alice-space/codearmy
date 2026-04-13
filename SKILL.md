@@ -1,6 +1,6 @@
 ---
 name: codearmy
-description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orchestrator 负责统筹；Planner 固定为 Claude 提供的 `opus[1m]`，Planner_Reviewer 固定为 Codex 提供的 `gpt-5.4 xhigh`，Executor 固定为 Codex 提供的 `gpt-5.4 high`，Reviewer 固定为 Claude 提供的 `sonnet`。变化的只有调用路由：按当前宿主运行时在 `spawn_agent` 与 plugin 之间正确分流。适用于多阶段、多子任务、多 repo 的长期并行推进。
+description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orchestrator 负责统筹；Planner 固定为 Claude 提供的 `opus[1m]`，Planner_Reviewer 固定为 Codex 提供的 `gpt-5.4 xhigh`，Executor 固定为 Claude 提供的 `sonnet 4.6`，Reviewer 固定为 Codex 提供的 `gpt-5.4 xhigh`。变化的只有调用路由：按当前宿主运行时在 `spawn_agent` 与 plugin 之间正确分流。适用于多阶段、多子任务、多 repo 的长期并行推进。
 ---
 
 # CodeArmy — Orchestrator-Native Edition
@@ -14,7 +14,7 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orc
 - **Campaign repo 是所有 subagent 的共享通信总线**：subagent 将产出写入 campaign repo，Orchestrator 读取 repo 了解进展，不直接接受 subagent 大段汇报。
 - **编排宿主直接说话即可发飞书**：文字输出通过 `onThinking → sendAgentMessage` 自动推送飞书，不需要 alice-message。
 - **统一术语**：维护 `glossary.md`，所有角色对相同事物使用相同称呼。
-- **角色模型固定，调用通道不写死**：Planner 固定 Claude `opus[1m]`，Planner_Reviewer 固定 Codex `gpt-5.4 xhigh`，Executor 固定 Codex `gpt-5.4 high`，Reviewer 固定 Claude `sonnet`；只根据宿主运行时选择 `spawn_agent` 或 plugin。
+- **角色模型固定，调用通道不写死**：Planner 固定 Claude `opus[1m]`，Planner_Reviewer 固定 Codex `gpt-5.4 xhigh`，Executor 固定 Claude `sonnet 4.6`，Reviewer 固定 Codex `gpt-5.4 xhigh`；只根据宿主运行时选择 `spawn_agent` 或 plugin。
 
 ## 运行时分流矩阵
 
@@ -31,8 +31,8 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orc
 
 1. **Planner 固定为 Claude 提供的 `opus[1m]`**。
 2. **Planner_Reviewer 固定为 Codex 提供的 `gpt-5.4 xhigh`**。
-3. **Executor 固定为 Codex 提供的 `gpt-5.4 high`**。
-4. **Reviewer 固定为 Claude 提供的 `sonnet`**。
+3. **Executor 固定为 Claude 提供的 `sonnet 4.6`**。
+4. **Reviewer 固定为 Codex 提供的 `gpt-5.4 xhigh`**。
 5. 只有调用通道会变：**同宿主家族优先走 `spawn_agent`**，**跨宿主家族必须走 plugin**。
 6. 在 Codex 宿主中，Claude plugin 参考本仓库的 `./scripts/claude-plugin.sh` 或已安装的 `claudeagent` skill。
 7. 在 Claude Code 宿主中，如需 CodeX 系列模型，使用当前 Claude Code 环境里已安装的 CodeX plugin；不要假设本仓库自带该 plugin。
@@ -44,8 +44,8 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orc
 | **Orchestrator** | 我自己 | 当前长期 session | 统筹调度、用户对话、维护进展状态表 |
 | **Planner** | Claude `opus[1m]`，运行时分流 | Claude Code 宿主走原生 `spawn_agent` / subagent；Codex 宿主走 Claude plugin | 将目标细化为 phase / task，输出可执行计划 |
 | **Planner_Reviewer** | Codex `gpt-5.4 xhigh`，运行时分流 | Codex 宿主走 `spawn_agent`；Claude Code 宿主走 CodeX plugin | 审阅计划，给出三路判决 |
-| **Executor** | Codex `gpt-5.4 high`，运行时分流 | Codex 宿主走 `spawn_agent`；Claude Code 宿主走 CodeX plugin | 执行具体 task，写入 progress.md 和 results/ |
-| **Reviewer** | Claude `sonnet`，运行时分流 | Claude Code 宿主走原生 `spawn_agent` / subagent；Codex 宿主走 Claude plugin | Task 级代码/结果审阅，写入 reviews/Rxxx.md |
+| **Executor** | Claude `sonnet 4.6`，运行时分流 | Claude Code 宿主走原生 `spawn_agent` / subagent；Codex 宿主走 Claude plugin | 执行具体 task，写入 progress.md 和 results/ |
+| **Reviewer** | Codex `gpt-5.4 xhigh`，运行时分流 | Codex 宿主走 `spawn_agent`；Claude Code 宿主走 CodeX plugin | Task 级代码/结果审阅，写入 reviews/Rxxx.md |
 
 ## 何时使用
 
@@ -163,22 +163,9 @@ EOF
 - **不要**在 sub agent 仍在运行时退出当前编排；除非用户明确要求暂停/终止，或所有工作都已收敛到可暂停状态。
 - 若 sub agent 是通过 Codex 原生 `spawn_agent` 拉起，**必须显式 `wait_agent` 并保持主编排存活**；不要把“已派发”误当成“可以结束当前主流程”。
 
-**调用 Executor（每个 task 独立调用；固定 Codex `gpt-5.4 high`，按运行时分流矩阵派发）：**
+**调用 Executor（每个 task 独立调用；固定 Claude `sonnet 4.6`，按运行时分流矩阵派发）：**
 
-> ⚠️ **当 Executor 实际跑在 Codex / CodeX 工作代理上时的目录与 sandbox 说明**
->
-> Codex 有三种 sandbox 模式：
-> | 模式 | 允许写入范围 |
-> |------|-------------|
-> | `read-only` | 不允许写任何文件 |
-> | `workspace-write`（默认） | 只允许写 CWD + TMPDIR |
-> | `danger-full-access` | 全盘可写，不受目录限制 |
->
-> 若 Codex 的 CWD、campaign repo、目标仓库不在同一可写范围内，`workspace-write` 模式会导致 campaign repo 或目标仓库写入失败（"read-only filesystem"）。
->
-> **解决方案**：无论你通过哪种原生 Codex 调度方式拉起 Executor，都要确保 `campaign_repo_path` 和 `target_repo_path` 同时处于该 Executor 的可写范围内。
-
-由于 Executor 固定使用 **Codex `gpt-5.4 high`**，当当前宿主是 **Codex** 时，应直接使用原生 `spawn_agent` 拉起该 Executor，并把下面这份 task prompt 交给它：
+由于 Executor 固定使用 **Claude `sonnet 4.6`**，当当前宿主是 **Claude Code** 时，应直接使用宿主原生 `spawn_agent` 拉起该 Executor，并把下面这份 task prompt 交给它：
 
 ```text
 你是 Executor。
@@ -207,9 +194,9 @@ Campaign repo（可读写）：<campaign_repo_path>
 
 其他 Executor 派发方式：
 
-- **Claude Code 宿主**：因为 Codex `gpt-5.4 high` 属于 CodeX 系列，所以走已安装的 CodeX plugin，使用同一份 task prompt。
+- **Codex 宿主**：因为 Claude `sonnet 4.6` 属于 Claude 系列，走 Claude plugin（如 `claudeagent` 或 `./scripts/claude-plugin.sh`），使用同一份 task prompt。
 
-**调用 Reviewer（每个 task 完成后立即调用；固定 Claude `sonnet`，按运行时分流矩阵派发）：**
+**调用 Reviewer（每个 task 完成后立即调用；固定 Codex `gpt-5.4 xhigh`，按运行时分流矩阵派发）：**
 
 ```bash
 REVIEWER_PROMPT=$(cat <<'EOF'
@@ -231,9 +218,9 @@ EOF
 
 派发说明：
 
-- Reviewer 固定是 **Claude `sonnet`**：
-  - 在 **Claude Code** 宿主里：直接用宿主原生 `spawn_agent` / subagent。
-  - 在 **Codex** 宿主里：走 Claude plugin；可用 `./scripts/claude-plugin.sh task --json --effort high --model sonnet "$REVIEWER_PROMPT"`。
+- Reviewer 固定是 **Codex `gpt-5.4 xhigh`**：
+  - 在 **Codex** 宿主里：直接用 `spawn_agent`。
+  - 在 **Claude Code** 宿主里：走已安装的 CodeX plugin，使用同一份 reviewer prompt。
 
 ### 阶段 4：验收（最终 Planner 验收）
 
@@ -328,7 +315,7 @@ Executor 必须严格按此格式写入，Orchestrator 和 Reviewer 依赖此格
 ---
 task_id: T001
 status: done          # executing | done | blocked | failed
-executor_model: gpt-5.4-medium
+executor_model: claude-sonnet-4-6
 started_at: 2026-04-04T10:00:00Z
 completed_at: 2026-04-04T10:32:00Z
 ---
