@@ -72,17 +72,18 @@ description: 以 Orchestrator-native 模式组织长期代码/研究协作。Orc
 
 ### 阶段 1：初始化 Campaign Repo
 
+**所有 campaign 必须统一存放在 `~/.alice/codearmy/` 目录下**。Campaign repo 路径固定为 `~/.alice/codearmy/<campaign_id>/`，不允许放在其他位置。
+
 Campaign repo 模板位于当前 checkout 的 `templates/campaign-repo/`。优先在 `codearmy` 仓库根目录下运行自带脚本，而不是手工 `cp`：
 
 ```bash
 ./scripts/init-campaign-repo.sh \
-  "$CAMPAIGN_REPO" \
   --campaign-id <campaign_id> \
   --title "<campaign_title>" \
   --objective "<objective>"
 ```
 
-脚本会复制模板、填充 `campaign.md` 中的常用占位符，并保留其余文件结构供 Planner 按需展开。若目标目录已存在且非空，脚本默认拒绝覆盖；明确要重建时，可追加 `--force`。
+脚本会自动将 campaign 创建在 `~/.alice/codearmy/<campaign_id>/` 下（无需手动指定路径），复制模板、填充 `campaign.md` 中的常用占位符，并保留其余文件结构供 Planner 按需展开。若目标目录已存在且非空，脚本默认拒绝覆盖；明确要重建时，可追加 `--force`。
 
 `_templates/` 子目录是供 Planner 按需复制的单文件模板（task.md、phase.md 等），**不需要**提前展开，Planner 在创建新 phase/task 时自行复制。
 

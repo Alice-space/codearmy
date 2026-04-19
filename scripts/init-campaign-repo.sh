@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+CODEARMY_BASE="$HOME/.alice/codearmy"
+
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/init-campaign-repo.sh <campaign-repo-path> --campaign-id <id> --title <title> --objective <objective> [--force]
+  ./scripts/init-campaign-repo.sh --campaign-id <id> --title <title> --objective <objective> [--force]
+
+Campaigns are always created under ~/.alice/codearmy/<campaign-id>/.
 
 The script copies templates/campaign-repo into the target directory and fills
 the standard placeholders in campaign.md.
@@ -15,16 +19,6 @@ if [[ $# -eq 0 ]]; then
   usage >&2
   exit 1
 fi
-
-case "${1:-}" in
-  -h|--help)
-    usage
-    exit 0
-    ;;
-esac
-
-TARGET_DIR=$1
-shift
 
 CAMPAIGN_ID=""
 TITLE=""
@@ -66,6 +60,8 @@ if [[ -z "$CAMPAIGN_ID" || -z "$TITLE" || -z "$OBJECTIVE" ]]; then
   usage >&2
   exit 1
 fi
+
+TARGET_DIR="$CODEARMY_BASE/$CAMPAIGN_ID"
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
